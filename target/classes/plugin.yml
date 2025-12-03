@@ -1,0 +1,7 @@
+name: StatsPlugin
+version: 1.21.6
+main: com.plp.statsplugin.StatsPlugin
+api-version: "1.21"
+commands:
+  stat:
+    description: Show vanilla stat
