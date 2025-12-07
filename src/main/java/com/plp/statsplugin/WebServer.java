@@ -65,10 +65,15 @@ public class WebServer {
             JsonObject o = new JsonObject();
             o.addProperty("uuid", uuid.toString());
 
-            // ===== ДОБАВЛЕНО: имя игрока =====
+            // Имя игрока
             String name = Bukkit.getOfflinePlayer(uuid).getName();
             o.addProperty("name", name != null ? name : "Unknown");
 
+            // ===== ДОБАВЛЕНО: статус онлайн =====
+            boolean isOnline = Bukkit.getPlayer(uuid) != null;
+            o.addProperty("online", isOnline);
+
+            // Полная статистика
             o.add("stats", statsManager.getFullStats(uuid));
 
             arr.add(o);
