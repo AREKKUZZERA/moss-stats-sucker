@@ -61,9 +61,16 @@ public class WebServer {
         JsonArray arr = new JsonArray();
 
         for (UUID uuid : statsManager.getStatsCache().keySet()) {
+
             JsonObject o = new JsonObject();
             o.addProperty("uuid", uuid.toString());
+
+            // ===== ДОБАВЛЕНО: имя игрока =====
+            String name = Bukkit.getOfflinePlayer(uuid).getName();
+            o.addProperty("name", name != null ? name : "Unknown");
+
             o.add("stats", statsManager.getFullStats(uuid));
+
             arr.add(o);
         }
 
