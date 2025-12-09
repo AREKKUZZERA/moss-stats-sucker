@@ -16,38 +16,59 @@ import java.util.concurrent.ConcurrentHashMap;
 public class StatsManager implements Listener {
 
     private final StatsPlugin plugin;
-    final Map<UUID, JsonObject> statsCache = new ConcurrentHashMap<>();
+
+    // Основной кэш статистики
+    private final Map<UUID, JsonObject> statsCache = new ConcurrentHashMap<>();
 
     public StatsManager(StatsPlugin plugin) {
         this.plugin = plugin;
     }
 
-    // Загружаем ВСЕХ оффлайн игроков (stats/<uuid>.json)
-    public void loadAllOfflineStats() {
-        plugin.getLogger().info("Loading offline player statistics...");
+    // ============================
+    // ASYNC ПРЕДЗАГРУЗКА ВСЕХ СТАТИСТИК
+    // ============================
+    public void preloadAllStatsAsync() {
 
-        for (OfflinePlayer p : Bukkit.getOfflinePlayers()) {
-            JsonObject stats = StatsUtil.readStats(p);
-            if (stats != null) {
-                statsCache.put(p.getUniqueId(), stats);
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+
+            long start = System.currentTimeMillis();
+
+            plugin.getLogger().info("[StatsPlugin] Загружаю статистику оффлайн игроков...");
+
+            int loaded = 0;
+
+            for (OfflinePlayer p : Bukkit.getOfflinePlayers()) {
+                JsonObject stats = StatsUtil.readStats(p);
+                if (stats != null) {
+                    statsCache.put(p.getUniqueId(), stats);
+                    loaded++;
+                }
             }
-        }
 
-        plugin.getLogger().info("Loaded " + statsCache.size() + " offline player stats.");
+            long elapsed = System.currentTimeMillis() - start;
+
+            plugin.getLogger().info("[StatsPlugin] Загружено: " + loaded +
+                    " игроков (" + elapsed + " ms)");
+        });
     }
 
+    // ============================
+    // Чтение статистики
+    // ============================
     public Integer getStat(UUID uuid, String statKey) {
         JsonObject obj = statsCache.get(uuid);
-        if (obj == null)
-            return 0;
+        if (obj == null) return 0;
 
-        try {
-            return StatsUtil.getCustomStat(obj, statKey);
-        } catch (Exception e) {
-            return 0;
-        }
+        return StatsUtil.getAnyStat(obj, statKey);
     }
 
+    public JsonObject getFullStats(UUID uuid) {
+        return statsCache.getOrDefault(uuid, new JsonObject());
+    }
+
+    // ============================
+    // Ручное обновление одного игрока
+    // ============================
     public void updatePlayer(Player p) {
         JsonObject stats = StatsUtil.readStats(p);
         if (stats != null) {
@@ -55,33 +76,44 @@ public class StatsManager implements Listener {
         }
     }
 
+    // ============================
+    // Автообновление всех ONLINE игроков
+    // ============================
     public void updateAllOnlinePlayers() {
         for (Player p : Bukkit.getOnlinePlayers()) {
             updatePlayer(p);
         }
     }
 
+    // ============================
+    // EVENTS
+    // ============================
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
-        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> updatePlayer(e.getPlayer()));
+        Bukkit.getScheduler().runTaskAsynchronously(plugin,
+                () -> updatePlayer(e.getPlayer()));
     }
 
     @EventHandler
     public void onQuit(PlayerQuitEvent e) {
-        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> updatePlayer(e.getPlayer()));
+        Bukkit.getScheduler().runTaskAsynchronously(plugin,
+                () -> updatePlayer(e.getPlayer()));
     }
 
-    // API access
+    // ============================
+    // API UTIL METHODS
+    // ============================
+
     public Map<UUID, JsonObject> getStatsCache() {
         return statsCache;
     }
 
     public UUID getUUID(String name) {
-        OfflinePlayer p = Bukkit.getOfflinePlayer(name);
-        return p.hasPlayedBefore() ? p.getUniqueId() : null;
-    }
-
-    public JsonObject getFullStats(UUID uuid) {
-        return statsCache.getOrDefault(uuid, new JsonObject());
+        for (OfflinePlayer p : Bukkit.getOfflinePlayers()) {
+            if (p.getName() != null && p.getName().equalsIgnoreCase(name)) {
+                return p.getUniqueId();
+            }
+        }
+        return null;
     }
 }

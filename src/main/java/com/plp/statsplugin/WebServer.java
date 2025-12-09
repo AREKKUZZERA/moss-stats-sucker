@@ -41,9 +41,6 @@ public class WebServer {
             // Универсальный топ: /moss/top/<stat_key>
             server.createContext("/moss/top/", this::handleTopGeneric);
 
-            // HTML-панель
-            server.createContext("/moss/ui", this::handleUI);
-
             server.setExecutor(null);
             server.start();
         } catch (IOException e) {
@@ -69,7 +66,7 @@ public class WebServer {
             String name = Bukkit.getOfflinePlayer(uuid).getName();
             o.addProperty("name", name != null ? name : "Unknown");
 
-            // ===== ДОБАВЛЕНО: статус онлайн =====
+            // Статус онлайн
             boolean isOnline = Bukkit.getPlayer(uuid) != null;
             o.addProperty("online", isOnline);
 
@@ -171,7 +168,6 @@ public class WebServer {
                 if (statRoot == null)
                     continue;
 
-                // custom
                 JsonObject custom = statRoot.getAsJsonObject("minecraft:custom");
                 if (custom != null) {
                     if (custom.has("minecraft:jump"))
@@ -182,7 +178,6 @@ public class WebServer {
                         totalPlaytime += custom.get("minecraft:play_time").getAsInt();
                 }
 
-                // mined
                 JsonObject mined = statRoot.getAsJsonObject("minecraft:mined");
                 if (mined != null) {
                     for (String key : mined.keySet()) {
@@ -190,7 +185,6 @@ public class WebServer {
                     }
                 }
 
-                // crafted
                 JsonObject crafted = statRoot.getAsJsonObject("minecraft:crafted");
                 if (crafted != null) {
                     for (String key : crafted.keySet()) {
@@ -217,12 +211,12 @@ public class WebServer {
         send(ex, 200, gson.toJson(out), "application/json; charset=UTF-8");
     }
 
-    // /moss/top/jumps (старый, "alias" к /moss/top/minecraft:jump)
+    // /moss/top/jumps
     private void handleTopJumps(HttpExchange ex) throws IOException {
         handleTopInternal(ex, "minecraft:jump");
     }
 
-    // /moss/top/<stat_key> — универсальный
+    // /moss/top/<stat_key>
     private void handleTopGeneric(HttpExchange ex) throws IOException {
         if (!ex.getRequestMethod().equalsIgnoreCase("GET")) {
             send(ex, 405, "Method Not Allowed", "text/plain");
@@ -241,14 +235,13 @@ public class WebServer {
         handleTopInternal(ex, statKey);
     }
 
-    // Внутренняя логика формирования топа
     private void handleTopInternal(HttpExchange ex, String statKey) throws IOException {
         List<Map.Entry<UUID, JsonObject>> players = new ArrayList<>(statsManager.getStatsCache().entrySet());
 
         players.sort((a, b) -> {
             int av = StatsUtil.getAnyStat(a.getValue(), statKey);
             int bv = StatsUtil.getAnyStat(b.getValue(), statKey);
-            return Integer.compare(bv, av); // по убыванию
+            return Integer.compare(bv, av);
         });
 
         JsonArray arr = new JsonArray();
@@ -267,154 +260,11 @@ public class WebServer {
         send(ex, 200, gson.toJson(arr), "application/json; charset=UTF-8");
     }
 
-    // /moss/ui — простая HTML панель
-    private void handleUI(HttpExchange ex) throws IOException {
-        if (!ex.getRequestMethod().equalsIgnoreCase("GET")) {
-            send(ex, 405, "Method Not Allowed", "text/plain");
-            return;
-        }
-
-        String html = """
-                <!DOCTYPE html>
-                <html lang="en">
-                <head>
-                    <meta charset="UTF-8">
-                    <title>Moss Stats Panel</title>
-                    <style>
-                        body { font-family: Arial, sans-serif; margin: 20px; background: #111; color: #eee; }
-                        h1, h2 { color: #6cf; }
-                        .card { background: #1b1b1b; padding: 15px; margin-bottom: 20px; border-radius: 8px; }
-                        table { border-collapse: collapse; width: 100%; }
-                        th, td { border: 1px solid #333; padding: 8px; text-align: left; }
-                        th { background: #222; }
-                        input, button { padding: 6px 10px; margin: 2px; background: #222; color: #eee; border: 1px solid #555; border-radius: 4px; }
-                        button { cursor: pointer; }
-                        button:hover { background: #333; }
-                        pre { background: #000; padding: 10px; border-radius: 5px; }
-                    </style>
-                </head>
-                <body>
-
-                <h1>Moss Stats Panel</h1>
-
-                <div class="card">
-                    <h2>Summary</h2>
-                    <pre id="summary">Loading...</pre>
-                </div>
-
-                <div class="card">
-                    <h2>Top by Stat</h2>
-                    <div>
-                        Stat key: <input id="statKey" value="minecraft:jump" />
-                        <button onclick="loadTop()">Load</button>
-                    </div>
-                    <table>
-                        <thead>
-                            <tr><th>#</th><th>UUID</th><th>Value</th></tr>
-                        </thead>
-                        <tbody id="topTable"></tbody>
-                    </table>
-                </div>
-
-                <div class="card">
-                    <h2>Online Players</h2>
-                    <table>
-                        <thead>
-                            <tr><th>UUID</th><th>Name</th></tr>
-                        </thead>
-                        <tbody id="onlineTable"></tbody>
-                    </table>
-                </div>
-
-                <div class="card">
-                    <h2>Player Lookup (By Name or UUID)</h2>
-                    <div>
-                        <input id="lookupInput" placeholder="Enter player name or UUID" style="width:300px;">
-                        <button onclick="lookupPlayer()">Lookup</button>
-                    </div>
-                    <pre id="lookupResult">Enter a name or UUID...</pre>
-                </div>
-
-                <script>
-                async function loadSummary() {
-                    const res = await fetch('/moss/summary');
-                    const data = await res.json();
-                    document.getElementById('summary').textContent = JSON.stringify(data, null, 2);
-                }
-
-                async function loadOnline() {
-                    const res = await fetch('/moss/online');
-                    const data = await res.json();
-                    const tbody = document.getElementById('onlineTable');
-                    tbody.innerHTML = '';
-                    data.forEach(p => {
-                        const tr = document.createElement('tr');
-                        tr.innerHTML = '<td>' + p.uuid + '</td><td>' + p.name + '</td>';
-                        tbody.appendChild(tr);
-                    });
-                }
-
-                async function loadTop() {
-                    const key = encodeURIComponent(document.getElementById('statKey').value);
-                    const res = await fetch('/moss/top/' + key);
-                    const data = await res.json();
-                    const tbody = document.getElementById('topTable');
-                    tbody.innerHTML = '';
-                    data.forEach((row, idx) => {
-                        const tr = document.createElement('tr');
-                        tr.innerHTML =
-                            '<td>' + (idx + 1) + '</td>' +
-                            '<td>' + row.uuid + '</td>' +
-                            '<td>' + row.value + '</td>';
-                        tbody.appendChild(tr);
-                    });
-                }
-
-                async function lookupPlayer() {
-                    const input = document.getElementById('lookupInput').value.trim();
-                    let res;
-
-                    try {
-                        // Try UUID lookup
-                        if (input.length >= 32) {
-                            res = await fetch('/moss/players/' + input);
-                        } else {
-                            // Lookup by name
-                            res = await fetch('/moss/player/' + encodeURIComponent(input));
-                        }
-
-                        if (!res.ok) {
-                            document.getElementById('lookupResult').textContent =
-                                "Player not found or error: " + res.status;
-                            return;
-                        }
-
-                        const data = await res.json();
-                        document.getElementById('lookupResult')
-                            .textContent = JSON.stringify(data, null, 2);
-
-                    } catch (e) {
-                        document.getElementById('lookupResult').textContent = "Error: " + e;
-                    }
-                }
-
-                loadSummary();
-                loadOnline();
-                loadTop();
-                setInterval(loadOnline, 10000);
-                </script>
-
-                </body>
-                </html>
-                """;
-
-        send(ex, 200, html, "text/html; charset=UTF-8");
-    }
-
     private void send(HttpExchange exchange, int code, String body, String contentType) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", contentType);
         exchange.sendResponseHeaders(code, bytes.length);
+
         try (OutputStream os = exchange.getResponseBody()) {
             os.write(bytes);
         }

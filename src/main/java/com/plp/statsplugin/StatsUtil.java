@@ -13,72 +13,122 @@ public class StatsUtil {
 
     private static final Gson gson = new Gson();
 
+    // Кэш stats/ директории, чтобы не искать каждый раз
+    private static File cachedStatsFolder = null;
+
+    /**
+     * Поиск каталога stats/. Один раз, потом используется кэш.
+     */
     private static File getStatsFolder() {
 
-        for (World w : Bukkit.getWorlds()) {
-            File folder = w.getWorldFolder();
-            File statsDir = new File(folder, "stats");
+        // Если ранее уже нашли — используем
+        if (cachedStatsFolder != null && cachedStatsFolder.exists()) {
+            return cachedStatsFolder;
+        }
 
-            if (statsDir.exists() && statsDir.isDirectory()) {
-                return statsDir;
+        // Пробуем сначала основной мир "world"
+        World main = Bukkit.getWorld("world");
+        if (main != null) {
+            File stats = new File(main.getWorldFolder(), "stats");
+            if (stats.exists() && stats.isDirectory()) {
+                cachedStatsFolder = stats;
+                return cachedStatsFolder;
             }
         }
 
-        Bukkit.getLogger().warning("[StatsPlugin] Не найдено подходящего stats/ каталога ни в одном мире!");
+        // Фолбэк — ищем первый попавшийся stats/
+        for (World w : Bukkit.getWorlds()) {
+            if (w == null) continue;
+
+            File stats = new File(w.getWorldFolder(), "stats");
+            if (stats.exists() && stats.isDirectory()) {
+                cachedStatsFolder = stats;
+                return cachedStatsFolder;
+            }
+        }
+
+        Bukkit.getLogger().warning("[StatsPlugin] Не найден каталог stats/ ни в одном мире!");
         return null;
     }
 
+    /**
+     * Чтение JSON статистики игрока
+     */
     public static JsonObject readStats(OfflinePlayer player) {
         File statsDir = getStatsFolder();
         if (statsDir == null) return null;
 
         File statsFile = new File(statsDir, player.getUniqueId() + ".json");
-        if (!statsFile.exists()) return null;
+
+        if (!statsFile.exists())
+            return null;
 
         try (FileReader reader = new FileReader(statsFile)) {
             return gson.fromJson(reader, JsonObject.class);
         } catch (Exception e) {
-            Bukkit.getLogger().warning("[StatsPlugin] Ошибка чтения файла статистики: " + statsFile.getAbsolutePath());
+            Bukkit.getLogger().warning("[StatsPlugin] Ошибка чтения статистики: " + statsFile.getAbsolutePath());
             e.printStackTrace();
             return null;
         }
     }
 
-    public static Integer getCustomStat(JsonObject root, String statKey) {
+    /**
+     * Чтение custom статистики (minecraft:custom)
+     */
+    public static int getCustomStat(JsonObject root, String statKey) {
+        if (root == null) return 0;
+
         try {
-            return root
-                    .getAsJsonObject("stats")
-                    .getAsJsonObject("minecraft:custom")
-                    .getAsJsonPrimitive(statKey)
-                    .getAsInt();
+            JsonObject stats = root.getAsJsonObject("stats");
+            if (stats == null) return 0;
+
+            JsonObject custom = stats.getAsJsonObject("minecraft:custom");
+            if (custom == null) return 0;
+
+            if (custom.has(statKey)) {
+                return custom.get(statKey).getAsInt();
+            }
+        } catch (Exception ignored) {}
+
+        return 0;
+    }
+
+    /**
+     * Универсальный поиск статистики:
+     * custom / mined / crafted / used / broken / picked_up / dropped
+     */
+    public static int getAnyStat(JsonObject root, String statKey) {
+        if (root == null) return 0;
+
+        JsonObject statsRoot;
+        try {
+            statsRoot = root.getAsJsonObject("stats");
         } catch (Exception e) {
             return 0;
         }
-    }
 
-    public static int getAnyStat(JsonObject root, String statKey) {
-        try {
-            JsonObject statsRoot = root.getAsJsonObject("stats");
-            if (statsRoot == null) return 0;
+        if (statsRoot == null) return 0;
 
-            String[] sections = new String[]{
-                    "minecraft:custom",
-                    "minecraft:mined",
-                    "minecraft:crafted",
-                    "minecraft:used",
-                    "minecraft:broken",
-                    "minecraft:picked_up",
-                    "minecraft:dropped"
-            };
+        String[] sections = new String[]{
+                "minecraft:custom",
+                "minecraft:mined",
+                "minecraft:crafted",
+                "minecraft:used",
+                "minecraft:broken",
+                "minecraft:picked_up",
+                "minecraft:dropped"
+        };
 
-            for (String section : sections) {
+        for (String section : sections) {
+            try {
                 JsonObject sec = statsRoot.getAsJsonObject(section);
                 if (sec == null) continue;
+
                 if (sec.has(statKey)) {
                     return sec.get(statKey).getAsInt();
                 }
-            }
-        } catch (Exception ignored) {}
+            } catch (Exception ignored) {}
+        }
 
         return 0;
     }

@@ -13,14 +13,15 @@ public class StatsPlugin extends JavaPlugin {
 
     @Override
     public void onEnable() {
+
         saveDefaultConfig();
 
         this.statsManager = new StatsManager(this);
 
         Bukkit.getPluginManager().registerEvents(statsManager, this);
 
-        // Автоматическая подгрузка статистики оффлайн игроков
-        Bukkit.getScheduler().runTaskAsynchronously(this, statsManager::loadAllOfflineStats);
+        // ПРАВИЛЬНАЯ АСИНХРОННАЯ ПРЕДЗАГРУЗКА ВСЕХ СТАТОВ
+        statsManager.preloadAllStatsAsync();
 
         // Периодическое обновление статистики онлайн игроков
         int intervalTicks = 20 * getConfig().getInt("update-interval-seconds", 60);
@@ -29,7 +30,8 @@ public class StatsPlugin extends JavaPlugin {
                     this,
                     statsManager::updateAllOnlinePlayers,
                     intervalTicks,
-                    intervalTicks);
+                    intervalTicks
+            );
         }
 
         // WEB API
@@ -53,6 +55,7 @@ public class StatsPlugin extends JavaPlugin {
 
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
+
         if (!cmd.getName().equalsIgnoreCase("stat"))
             return false;
 
