@@ -5,29 +5,37 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpExchange;
-import org.bukkit.Bukkit;
-import org.bukkit.entity.Player;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public class WebServer {
 
     private final StatsManager statsManager;
     private HttpServer server;
     private final Gson gson = new Gson();
+    private final Logger logger;
+    private final Settings settings;
+    private ExecutorService executor;
 
-    public WebServer(StatsManager statsManager) {
+    public WebServer(StatsManager statsManager, Logger logger, Settings settings) {
         this.statsManager = statsManager;
+        this.logger = logger;
+        this.settings = settings;
     }
 
     public void start(int port) {
         try {
-            server = HttpServer.create(new InetSocketAddress(port), 0);
+            server = HttpServer.create(new InetSocketAddress(settings.bindAddress(), port), 0);
 
             server.createContext("/moss/players", this::handleAllPlayers);
             server.createContext("/moss/players/", this::handlePlayerByUUID);
@@ -41,10 +49,11 @@ public class WebServer {
             // Универсальный топ: /moss/top/<stat_key>
             server.createContext("/moss/top/", this::handleTopGeneric);
 
-            server.setExecutor(null);
+            executor = Executors.newFixedThreadPool(4);
+            server.setExecutor(executor);
             server.start();
         } catch (IOException e) {
-            e.printStackTrace();
+            logger.log(Level.SEVERE, "Не удалось запустить web-сервер.", e);
         }
     }
 
@@ -56,24 +65,33 @@ public class WebServer {
         }
 
         JsonArray arr = new JsonArray();
+        int limit = resolveLimit(ex, settings.maxResponsePlayers());
+        Set<UUID> onlineSet = statsManager.getOnlinePlayerIdSet();
 
-        for (UUID uuid : statsManager.getStatsCache().keySet()) {
+        List<UUID> uuids = new ArrayList<>(statsManager.getStatsCache().keySet());
+        uuids.sort(Comparator.comparing(UUID::toString));
+
+        int count = 0;
+        for (UUID uuid : uuids) {
+            if (limit > 0 && count >= limit) {
+                break;
+            }
 
             JsonObject o = new JsonObject();
             o.addProperty("uuid", uuid.toString());
 
             // Имя игрока
-            String name = Bukkit.getOfflinePlayer(uuid).getName();
-            o.addProperty("name", name != null ? name : "Unknown");
+            String name = statsManager.getPlayerName(uuid);
+            o.addProperty("name", name);
 
             // Статус онлайн
-            boolean isOnline = Bukkit.getPlayer(uuid) != null;
-            o.addProperty("online", isOnline);
+            o.addProperty("online", onlineSet.contains(uuid));
 
             // Полная статистика
             o.add("stats", statsManager.getFullStats(uuid));
 
             arr.add(o);
+            count++;
         }
 
         send(ex, 200, gson.toJson(arr), "application/json; charset=UTF-8");
@@ -116,6 +134,10 @@ public class WebServer {
 
         String nameEncoded = parts[3];
         String name = URLDecoder.decode(nameEncoded, StandardCharsets.UTF_8);
+        if (!isValidPlayerName(name)) {
+            send(ex, 400, "Invalid player name", "text/plain");
+            return;
+        }
 
         UUID uuid = statsManager.getUUID(name);
 
@@ -136,12 +158,14 @@ public class WebServer {
         }
 
         JsonArray arr = new JsonArray();
+        List<UUID> online = statsManager.getOnlinePlayerIds();
+        online.sort(Comparator.comparing(UUID::toString));
 
-        for (Player p : Bukkit.getOnlinePlayers()) {
+        for (UUID uuid : online) {
             JsonObject o = new JsonObject();
-            o.addProperty("uuid", p.getUniqueId().toString());
-            o.addProperty("name", p.getName());
-            o.add("stats", statsManager.getFullStats(p.getUniqueId()));
+            o.addProperty("uuid", uuid.toString());
+            o.addProperty("name", statsManager.getPlayerName(uuid));
+            o.add("stats", statsManager.getFullStats(uuid));
             arr.add(o);
         }
 
@@ -230,7 +254,11 @@ public class WebServer {
         }
 
         String encodedKey = parts[3];
-        String statKey = URLDecoder.decode(encodedKey, StandardCharsets.UTF_8);
+        String statKey = URLDecoder.decode(encodedKey, StandardCharsets.UTF_8).trim();
+        if (!isValidStatKey(statKey)) {
+            send(ex, 400, "Invalid stat key", "text/plain");
+            return;
+        }
 
         handleTopInternal(ex, statKey);
     }
@@ -246,12 +274,15 @@ public class WebServer {
 
         JsonArray arr = new JsonArray();
 
-        for (int i = 0; i < Math.min(20, players.size()); i++) {
+        int limit = resolveLimit(ex, settings.maxTopResults());
+        int max = limit > 0 ? Math.min(limit, players.size()) : Math.min(settings.maxTopResults(), players.size());
+        for (int i = 0; i < max; i++) {
             UUID uuid = players.get(i).getKey();
             int value = StatsUtil.getAnyStat(players.get(i).getValue(), statKey);
 
             JsonObject o = new JsonObject();
             o.addProperty("uuid", uuid.toString());
+            o.addProperty("name", statsManager.getPlayerName(uuid));
             o.addProperty("value", value);
             o.addProperty("stat_key", statKey);
             arr.add(o);
@@ -263,6 +294,9 @@ public class WebServer {
     private void send(HttpExchange exchange, int code, String body, String contentType) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", contentType);
+        if (settings.corsEnabled()) {
+            exchange.getResponseHeaders().set("Access-Control-Allow-Origin", settings.corsAllowOrigin());
+        }
         exchange.sendResponseHeaders(code, bytes.length);
 
         try (OutputStream os = exchange.getResponseBody()) {
@@ -271,7 +305,60 @@ public class WebServer {
     }
 
     public void stop() {
-        if (server != null)
+        if (server != null) {
             server.stop(0);
+        }
+        if (executor != null) {
+            executor.shutdownNow();
+        }
+    }
+
+    private int resolveLimit(HttpExchange exchange, int defaultLimit) {
+        String query = exchange.getRequestURI().getQuery();
+        if (query == null || query.isBlank()) {
+            return defaultLimit;
+        }
+
+        for (String part : query.split("&")) {
+            String[] kv = part.split("=", 2);
+            if (kv.length == 2 && kv[0].equalsIgnoreCase("limit")) {
+                try {
+                    int value = Integer.parseInt(kv[1]);
+                    if (value <= 0) {
+                        return defaultLimit;
+                    }
+                    if (defaultLimit > 0) {
+                        return Math.min(value, defaultLimit);
+                    }
+                    return value;
+                } catch (NumberFormatException ignored) {
+                    return defaultLimit;
+                }
+            }
+        }
+        return defaultLimit;
+    }
+
+    private boolean isValidStatKey(String statKey) {
+        if (statKey == null || statKey.isBlank() || statKey.length() > 128) {
+            return false;
+        }
+        return statKey.matches("[a-z0-9_:\\-.]+");
+    }
+
+    private boolean isValidPlayerName(String name) {
+        if (name == null || name.isBlank() || name.length() > 16) {
+            return false;
+        }
+        return name.matches("[A-Za-z0-9_]+");
+    }
+
+    public record Settings(
+            InetAddress bindAddress,
+            int maxResponsePlayers,
+            int maxTopResults,
+            boolean corsEnabled,
+            String corsAllowOrigin
+    ) {
     }
 }

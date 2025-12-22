@@ -2,19 +2,21 @@ package com.plp.statsplugin;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
-import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
-import org.bukkit.World;
 
 import java.io.File;
 import java.io.FileReader;
+import java.util.UUID;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public class StatsUtil {
 
     private static final Gson gson = new Gson();
 
     // Кэш stats/ директории, чтобы не искать каждый раз
-    private static File cachedStatsFolder = null;
+    private static volatile File cachedStatsFolder = null;
+    private static volatile Logger logger = null;
 
     /**
      * Поиск каталога stats/. Один раз, потом используется кэш.
@@ -26,49 +28,50 @@ public class StatsUtil {
             return cachedStatsFolder;
         }
 
-        // Пробуем сначала основной мир "world"
-        World main = Bukkit.getWorld("world");
-        if (main != null) {
-            File stats = new File(main.getWorldFolder(), "stats");
-            if (stats.exists() && stats.isDirectory()) {
-                cachedStatsFolder = stats;
-                return cachedStatsFolder;
-            }
-        }
-
-        // Фолбэк — ищем первый попавшийся stats/
-        for (World w : Bukkit.getWorlds()) {
-            if (w == null) continue;
-
-            File stats = new File(w.getWorldFolder(), "stats");
-            if (stats.exists() && stats.isDirectory()) {
-                cachedStatsFolder = stats;
-                return cachedStatsFolder;
-            }
-        }
-
-        Bukkit.getLogger().warning("[StatsPlugin] Не найден каталог stats/ ни в одном мире!");
+        log(Level.WARNING, "Не найден каталог stats/. Убедитесь, что путь задан в конфиге.");
         return null;
+    }
+
+    public static void setStatsFolder(File statsFolder) {
+        cachedStatsFolder = statsFolder;
+    }
+
+    public static void setLogger(Logger pluginLogger) {
+        logger = pluginLogger;
     }
 
     /**
      * Чтение JSON статистики игрока
      */
     public static JsonObject readStats(OfflinePlayer player) {
-        File statsDir = getStatsFolder();
-        if (statsDir == null) return null;
-
-        File statsFile = new File(statsDir, player.getUniqueId() + ".json");
-
-        if (!statsFile.exists())
+        if (player == null || player.getUniqueId() == null) {
             return null;
+        }
+        return readStats(player.getUniqueId());
+    }
+
+    public static JsonObject readStats(UUID uuid) {
+        File statsDir = getStatsFolder();
+        if (statsDir == null || uuid == null) return null;
+
+        File statsFile = new File(statsDir, uuid + ".json");
+
+        if (!statsFile.exists()) {
+            return null;
+        }
 
         try (FileReader reader = new FileReader(statsFile)) {
             return gson.fromJson(reader, JsonObject.class);
         } catch (Exception e) {
-            Bukkit.getLogger().warning("[StatsPlugin] Ошибка чтения статистики: " + statsFile.getAbsolutePath());
-            e.printStackTrace();
+            log(Level.WARNING, "Ошибка чтения статистики: " + statsFile.getAbsolutePath());
+            log(Level.FINE, "Ошибка чтения статистики: " + e.getMessage());
             return null;
+        }
+    }
+
+    private static void log(Level level, String message) {
+        if (logger != null) {
+            logger.log(level, message);
         }
     }
 

@@ -6,6 +6,12 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import java.io.File;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.util.List;
+import java.util.logging.Level;
+
 public class StatsPlugin extends JavaPlugin {
 
     private StatsManager statsManager;
@@ -15,6 +21,9 @@ public class StatsPlugin extends JavaPlugin {
     public void onEnable() {
 
         saveDefaultConfig();
+
+        StatsUtil.setLogger(getLogger());
+        StatsUtil.setStatsFolder(resolveStatsFolder());
 
         this.statsManager = new StatsManager(this);
 
@@ -26,20 +35,44 @@ public class StatsPlugin extends JavaPlugin {
         // Периодическое обновление статистики онлайн игроков
         int intervalTicks = 20 * getConfig().getInt("update-interval-seconds", 60);
         if (intervalTicks > 0) {
-            Bukkit.getScheduler().runTaskTimerAsynchronously(
+            Bukkit.getScheduler().runTaskTimer(
                     this,
                     statsManager::updateAllOnlinePlayers,
                     intervalTicks,
                     intervalTicks
             );
+        } else {
+            getLogger().warning("update-interval-seconds <= 0, автообновление статистики отключено.");
         }
 
         // WEB API
-        int port = getConfig().getInt("web-port", 8080);
-        webServer = new WebServer(statsManager);
-        webServer.start(port);
+        boolean webEnabled = getConfig().getBoolean("web.enabled", true);
+        int port = getConfig().getInt("web.port", getConfig().getInt("web-port", 8080));
+        String bindAddress = getConfig().getString("web.bind-address", "0.0.0.0");
+        int maxPlayers = getConfig().getInt("web.max-response-players", 0);
+        int maxTop = getConfig().getInt("web.max-top-results", 20);
+        boolean corsEnabled = getConfig().getBoolean("web.cors.enabled", false);
+        String corsAllowOrigin = getConfig().getString("web.cors.allow-origin", "*");
 
-        getLogger().info("Web API started on port " + port);
+        if (webEnabled) {
+            if (!isValidPort(port)) {
+                getLogger().severe("Некорректный web-порт: " + port + ". Веб-сервер не запущен.");
+            } else {
+                WebServer.Settings settings = new WebServer.Settings(
+                        resolveBindAddress(bindAddress),
+                        Math.max(0, maxPlayers),
+                        Math.max(1, maxTop),
+                        corsEnabled,
+                        corsAllowOrigin
+                );
+                webServer = new WebServer(statsManager, getLogger(), settings);
+                webServer.start(port);
+                getLogger().info("Web API started on " + settings.bindAddress().getHostAddress() + ":" + port);
+            }
+        } else {
+            getLogger().info("Web API disabled via config.");
+        }
+
         getLogger().info("StatsPlugin enabled");
     }
 
@@ -75,5 +108,68 @@ public class StatsPlugin extends JavaPlugin {
 
         sender.sendMessage("Stats for " + target.getName() + ": " + statKey + " = " + value);
         return true;
+    }
+
+    private File resolveStatsFolder() {
+        String customFolder = getConfig().getString("stats-folder", "").trim();
+        if (!customFolder.isEmpty()) {
+            File candidate = new File(customFolder);
+            if (!candidate.isAbsolute()) {
+                candidate = new File(getServer().getWorldContainer(), customFolder);
+            }
+            if (candidate.exists() && candidate.isDirectory()) {
+                getLogger().info("Используется stats-folder: " + candidate.getAbsolutePath());
+                return candidate;
+            }
+            getLogger().warning("stats-folder не найден или не является каталогом: " + candidate.getAbsolutePath());
+        }
+
+        String worldName = getConfig().getString("stats-world", "world");
+        File statsDir = findStatsDirByWorld(worldName);
+        if (statsDir != null) {
+            getLogger().info("Используется stats каталог мира: " + statsDir.getAbsolutePath());
+            return statsDir;
+        }
+
+        getLogger().warning("Не удалось найти stats каталог. Статистика может быть недоступна.");
+        return null;
+    }
+
+    private File findStatsDirByWorld(String worldName) {
+        if (worldName != null) {
+            var world = Bukkit.getWorld(worldName);
+            if (world != null) {
+                File stats = new File(world.getWorldFolder(), "stats");
+                if (stats.exists() && stats.isDirectory()) {
+                    return stats;
+                }
+            }
+        }
+
+        List<org.bukkit.World> worlds = Bukkit.getWorlds();
+        for (org.bukkit.World world : worlds) {
+            File stats = new File(world.getWorldFolder(), "stats");
+            if (stats.exists() && stats.isDirectory()) {
+                return stats;
+            }
+        }
+        return null;
+    }
+
+    private boolean isValidPort(int port) {
+        return port > 0 && port <= 65535;
+    }
+
+    private InetAddress resolveBindAddress(String bindAddress) {
+        try {
+            return InetAddress.getByName(bindAddress);
+        } catch (UnknownHostException e) {
+            getLogger().log(Level.WARNING, "Некорректный bind-address: " + bindAddress + ". Использую 0.0.0.0");
+            try {
+                return InetAddress.getByName("0.0.0.0");
+            } catch (UnknownHostException ignored) {
+                return InetAddress.getLoopbackAddress();
+            }
+        }
     }
 }
