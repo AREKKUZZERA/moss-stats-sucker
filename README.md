@@ -244,7 +244,7 @@ src/main/java/com/plp/statsplugin/
 # ⚠ Требования
 
 * Java 21
-* Paper 1.21.6+
+* Paper 1.21+
 * Maven 3.8+
 
 ---
