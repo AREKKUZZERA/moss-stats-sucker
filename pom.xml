@@ -6,7 +6,7 @@
 
     <groupId>com.plp</groupId>
     <artifactId>statsplugin</artifactId>
-    <version>1.21.6-SNAPSHOT</version>
+    <version>1.21.0-SNAPSHOT</version>
     <name>StatsPlugin</name>
 
     <properties>
@@ -16,7 +16,7 @@
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
         <!-- API-версия Paper -->
-        <paper.api.version>1.21.6-R0.1-SNAPSHOT</paper.api.version>
+        <paper.api.version>1.21-R0.1-SNAPSHOT</paper.api.version>
     </properties>
 
     <repositories>
@@ -60,6 +60,12 @@
                         </goals>
                         <configuration>
                             <minimizeJar>false</minimizeJar>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <artifactSet>
+                                <excludes>
+                                    <exclude>io.papermc.paper:paper-api</exclude>
+                                </excludes>
+                            </artifactSet>
                         </configuration>
                     </execution>
                 </executions>

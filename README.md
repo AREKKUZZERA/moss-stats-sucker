@@ -2,14 +2,18 @@
 
 ### Высокопроизводительный REST API для ванильной статистики Minecraft
 
-**Paper 1.21.6+ · Java 21**
+**Paper 1.21.x (1.21–1.21.11) · Java 21**
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 ![Java Version](https://img.shields.io/badge/Java-21+-blue)
-![PaperMC](https://img.shields.io/badge/Paper-1.21.6-white)
+![PaperMC](https://img.shields.io/badge/Paper-1.21.x-white)
 ![Build](https://img.shields.io/badge/Build-Maven-orange)
 
 ---
+
+**Совместимость:** Paper 1.21.x (1.21–1.21.11)  
+**Java:** 21  
+**API:** только Bukkit/Paper (без NMS/CraftBukkit)
 
 ## 📘 Обзор
 
